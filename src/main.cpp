@@ -1,62 +1,76 @@
 #include "Graph.hpp"
 #include <iostream>
+#include <vector>
+#include <random>
 #include <chrono>
 
-int main() {
-    // Construct a 7-node network topology
-    Graph network(7);
+void runLargeScaleBenchmark(int numNodes, int numEdges) {
+    std::cout << "==========================================\n";
+    std::cout << " SCALE TEST: " << numNodes << " Nodes | " << numEdges << " Edges\n";
+    std::cout << "==========================================\n";
 
-    network.setNodeLabel(0, "Gateway-A");
-    network.setNodeLabel(1, "Core-1");
-    network.setNodeLabel(2, "Core-2");
-    network.setNodeLabel(3, "Dist-1");
-    network.setNodeLabel(4, "Dist-2");
-    network.setNodeLabel(5, "Edge-1");
-    network.setNodeLabel(6, "Gateway-B");
+    Graph network(numNodes);
 
-    network.addEdge(0, 1, 4.2);
-    network.addEdge(0, 2, 2.7);
-    network.addEdge(1, 2, 1.5);
-    network.addEdge(1, 3, 5.0);
-    network.addEdge(2, 4, 3.8);
-    network.addEdge(3, 4, 1.2);
-    network.addEdge(3, 5, 2.1);
-    network.addEdge(4, 5, 4.0);
-    network.addEdge(5, 6, 1.9);
-    network.addEdge(4, 6, 6.4);
+    std::mt19937 rng(42); // Deterministic seed for reproducible benchmarks
+    std::uniform_int_distribution<int> nodeDist(0, numNodes - 1);
+    std::uniform_real_distribution<double> weightDist(0.5, 50.0);
 
-    int start = 0;
-    int target = 6;
+    std::cout << "Generating synthetic network topology...\n";
+    auto genStart = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Benchmarking Dijkstra execution from " 
-              << network.getNodeLabel(start) << " to " 
-              << network.getNodeLabel(target) << "...\n";
+    // 1. Build a baseline spanning backbone so the graph is guaranteed connected
+    for (int i = 0; i < numNodes - 1; ++i) {
+        network.addEdge(i, i + 1, weightDist(rng));
+    }
 
-    // High-resolution clock starts
-    auto t1 = std::chrono::high_resolution_clock::now();
-    PathResult result = network.dijkstra(start, target);
-    auto t2 = std::chrono::high_resolution_clock::now();
-    // Clock ends
+    // 2. Add remaining random edges
+    int remainingEdges = numEdges - (numNodes - 1);
+    for (int i = 0; i < remainingEdges; ++i) {
+        int u = nodeDist(rng);
+        int v = nodeDist(rng);
+        if (u != v) {
+            network.addEdge(u, v, weightDist(rng));
+        }
+    }
 
-    // Compute execution time in microseconds (us)
-    std::chrono::duration<double, std::micro> elapsed_us = t2 - t1;
+    auto genEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> genTime = genEnd - genStart;
+    std::cout << "Graph constructed in: " << genTime.count() << " ms\n\n";
+
+    // 3. Benchmark Dijkstra from opposite ends of the network
+    int startNode = 0;
+    int endNode = numNodes - 1;
+
+    std::cout << "Resolving shortest path from Node 0 to Node " << endNode << "...\n";
+    
+    auto solveStart = std::chrono::high_resolution_clock::now();
+    PathResult result = network.dijkstra(startNode, endNode);
+    auto solveEnd = std::chrono::high_resolution_clock::now();
+
+    std::chrono::duration<double, std::milli> solveTimeMs = solveEnd - solveStart;
+    std::chrono::duration<double, std::micro> solveTimeUs = solveEnd - solveStart;
 
     if (result.exists) {
-        std::cout << "\nOptimal Route Resolved in " << elapsed_us.count() << " microseconds (sub-millisecond resolution)\n";
-        std::cout << "Path: ";
-        for (size_t i = 0; i < result.path.size(); ++i) {
-            std::cout << network.getNodeLabel(result.path[i]);
-            if (i + 1 < result.path.size()) {
-                std::cout << " -> ";
-            }
-        }
-        std::cout << "\nTotal Latency: " << result.totalCost << " ms\n\n";
-
-        network.exportToDOT("network_route.dot", result.path);
-        std::cout << "Updated network_route.dot\n";
+        std::cout << "Status        : SUCCESS\n";
+        std::cout << "Hops in Path  : " << result.path.size() << " nodes\n";
+        std::cout << "Total Latency : " << result.totalCost << " ms\n";
+        std::cout << "Runtime (ms)  : " << solveTimeMs.count() << " ms\n";
+        std::cout << "Runtime (us)  : " << solveTimeUs.count() << " microseconds\n";
     } else {
-        std::cout << "No route available.\n";
+        std::cout << "Status        : FAILED (No path found)\n";
     }
+    std::cout << "==========================================\n\n";
+}
+
+int main() {
+    // Warm-up & moderate scale
+    runLargeScaleBenchmark(1000, 5000);
+
+    // High-scale production simulation
+    runLargeScaleBenchmark(10000, 50000);
+
+    // Extreme stress test
+    runLargeScaleBenchmark(50000, 250000);
 
     return 0;
 }
